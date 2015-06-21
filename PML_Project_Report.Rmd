@@ -1,0 +1,128 @@
+---
+title: "PML Project Report"
+author: "Huy Dao"
+date: "Sunday, June 21, 2015"
+output: html_document
+---
+
+## Executive Summary
+The project aims to predict the manner in which a series of subjects performed physical activities via data collected by their wearable devices.  
+The classification model used is based on data from a relatively large training set with close to 20000 observations and 160 variables. Through the process of covariates reduction, the final model is a Random Forests model with 36 variables as predictors and with 100% success on the testing set. We're hinting that the number of variables could be reduced even more, but we're comfortable with the chosen number and the quality of the model.
+
+## Data Analysis
+
+Information about the data set, the purpose of the experiment and lots of other detals is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+### Data description 
+The training data for this project are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+
+```{r, message = FALSE}
+library(caret)
+library(rpart)
+library(randomForest)
+library(rattle)
+```
+### Loading data
+```{r, cache=TRUE, message=TRUE}
+training <- read.csv("pml-training.csv")
+testing<-read.csv("pml-testing.csv")
+dim(training); dim(testing)
+```
+Training set has 19622 observations and 160 variables; Test set has 20 observations and 160 variables.
+ 
+### Data transformation
+
+According to the information of the experiment, the first 7 columns of the data sets are irrelevant for our model, therefore we will remove them from the data sets (remember all data transformations must be applied to both training and testing data sets).
+```{r}
+training<-training[, -c(1:7)]
+testing<-testing[, -c(1:7)]
+```
+
+Getting getting rid of other irrelevant variables = zero covariates, by applying near zero variables method:
+```{r}
+set.seed(2015)
+nzvv <- nearZeroVar(testing)
+training<-training[, -nzvv]
+testing<-testing[, -nzvv]
+```
+
+There is a column difference between test and train; train has classe, test has problem\_id. We'll get rid of problem_id in test in add classe, so the 2 data sets have an identical set of variables.
+```{r}
+testing$problem_id <- NULL
+testing$classe<- c(rep("A",20))
+##transforming classe into a factor class for uniformity with the training set
+testing$classe <- as.factor(testing$classe)
+```
+
+
+## Prediction Model
+Our goal is to use a Random Forests model, but we're still having a high number of variables to use in the model (columns = `r dim(training)[2]`), so we can work on reducing the number of variables a bit more. We'll do so by first building an Rpart model and finding the important variables to keep.
+
+### Model Building and Cross-validation
+
+```{r, cache = TRUE}
+modFit <- rpart(classe ~ ., data = training, method="class")
+predTrain <- predict(modFit, newdata=training, type = "class")
+confusionMatrix(predTrain, training$classe)$overall[1]
+```
+
+Accuracy on this model is 0.75, pretty low, but we can see which variables are important for the model and select those for a better model.
+```{r}
+vi <- varImp(modFit)
+tmp<- rownames(vi)[vi$Overall>0]
+trainTemp<-training[, c(tmp,"classe")]
+testTemp<-testing[, c(tmp,"classe")]
+
+dim(trainTemp)
+dim(testTemp)
+```
+We are not down to `r dim(trainTemp)[2]` variables to use in our model and they are:
+```{r}
+tmp
+```
+
+Note: if we build a RandomForest model (modFit<- randomForest(classe ~ ., data = training, importance = TRUE), with all `r dim(training)[2]` variables, we get a model with Accuracy = 1 (which is very good) and it passes the accuracy test with the test dataset. We did this intermediate step only because we wanted to reduce the number of variables used in the model as much as possible and also wanted to exercise a different style of prediction model.
+
+
+### Model - final choice
+With these variables, let's build a Random Forests model, which is better suited to this execise:
+```{r, cache=TRUE}
+modelFit <- randomForest(classe ~ ., data = trainTemp, importance=TRUE)
+pred <- predict(modelFit, newdata=trainTemp)
+confusionMatrix(pred, trainTemp$classe)$overall[1]
+```
+Accuracy is 1 (100%), showing our model is pretty close to perfect. It could likely be reduced to even less variables, but this is a good model for us (we have `r dim(trainTemp)[2]` variables used by the model; the authors of the experiment hint at 17 variables). A good way of reducing further is by ordering the important variables by Gini index value and then trying various models with different numbers of variables to find the minimal boundary where the Accuracy becomes 1 (which would give us the minimal number of variables to use in the model).
+
+Our model's statistics:
+```{r}
+confusionMatrix(pred, trainTemp$classe)
+```
+
+And a view of our model:
+```{r}
+print(modelFit)
+table(predict(modelFit), trainTemp$classe)
+```
+
+### Out of Sample Errors
+We expect the error of our model to be close to 0. Let's calculate the Out of Sample Error Rate for our model:
+```{r}
+confTable<-confusionMatrix(pred,trainTemp$classe)
+errorRate<-1-sum(diag(confTable$table))/sum(confTable$table)
+errorRate
+```
+
+### Verification of our model
+Finally, we perform the verification on the test set (which went through the same data transformations we applied to the training data set):
+```{r}
+predTest <- predict(modelFit, newdata=testTemp)
+predTest
+```
+The results were verified with the submission part of the asignment and passed 100, which demostrates that the out of sample error is zero.
